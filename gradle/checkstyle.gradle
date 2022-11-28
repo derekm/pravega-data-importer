@@ -13,17 +13,19 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.pravega.dataimporter;
+plugins.withId('checkstyle') {
+    checkstyle {
+        toolVersion = checkstyleToolVersion
 
-import io.pravega.dataimporter.cli.KafkaMirroringCommand;
-import io.pravega.dataimporter.cli.PravegaMirroringCommand;
-import picocli.CommandLine;
+        configFile = new File(rootDir, "checkstyle/checkstyle.xml")
+        configProperties = [importControlFile: "$rootDir/checkstyle/import-control.xml",
+                            suppressionsFile: "$rootDir/checkstyle/suppressions.xml"]
+    }
 
-@CommandLine.Command(name = "pravega-data-importer",
-        mixinStandardHelpOptions = true,
-        subcommands = {PravegaMirroringCommand.class, KafkaMirroringCommand.class})
-public class Main {
-    public static void main(String[] args) {
-        new CommandLine(new Main()).execute(args);
+    plugins.withId('java') {
+        checkstyle {
+            // Exclude generated code from Checkstyle checks
+            checkstyleMain.exclude '**/rest/generated/**'
+        }
     }
 }

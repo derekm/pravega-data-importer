@@ -13,22 +13,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.pravega.dataimporter.actions;
+package io.pravega.dataimporter.jobs;
 
 /**
- * Implements the workflow related to mirroring one Pravega Stream from one cluster to another.
+ * Unit test class for KafkaMirroringJob
  */
-public class MirroringAction extends Action {
-
-    public final static String NAME = "stream-mirroring";
-
-    @Override
-    public void commitMetadataChanges() {
-
-    }
-
-    @Override
-    public String getJobName() {
-        return "PravegaStreamMirroringJob";
-    }
+public class KafkaMirroringJobTest {
 }

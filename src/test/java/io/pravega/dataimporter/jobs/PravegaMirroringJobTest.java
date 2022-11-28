@@ -13,17 +13,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.pravega.dataimporter;
+package io.pravega.dataimporter.jobs;
 
-import io.pravega.dataimporter.cli.KafkaMirroringCommand;
-import io.pravega.dataimporter.cli.PravegaMirroringCommand;
-import picocli.CommandLine;
-
-@CommandLine.Command(name = "pravega-data-importer",
-        mixinStandardHelpOptions = true,
-        subcommands = {PravegaMirroringCommand.class, KafkaMirroringCommand.class})
-public class Main {
-    public static void main(String[] args) {
-        new CommandLine(new Main()).execute(args);
-    }
+/**
+ * Unit test class for PravegaMirroringJob
+ */
+public class PravegaMirroringJobTest {
 }

@@ -13,19 +13,20 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.pravega.dataimporter.actions;
 
-public class ImportAction extends Action {
 
-    public final static String NAME = "stream-import";
-
-    @Override
-    public void commitMetadataChanges() {
-
+plugins.withId('com.github.spotbugs') {
+    spotbugs {
+        toolVersion = spotbugsVersion
+        effort = "max"
+        includeFilter = file("$rootDir/checkstyle/spotbugs-include.xml")
+        excludeFilter = file("$rootDir/checkstyle/spotbugs-exclude.xml")
+        ignoreFailures = false
     }
-
-    @Override
-    public String getJobName() {
-        return "PravegaImportMirroringJob";
+    spotbugsMain {
+        reports {
+            xml.enabled = false
+            html.enabled = true
+        }
     }
 }

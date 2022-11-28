@@ -17,12 +17,12 @@ package io.pravega.dataimporter.jobs;
 
 import io.pravega.client.admin.StreamInfo;
 import io.pravega.client.admin.StreamManager;
-import io.pravega.client.stream.StreamConfiguration;
 import io.pravega.client.stream.StreamCut;
 import io.pravega.dataimporter.AppConfiguration;
 import org.apache.flink.api.common.restartstrategy.RestartStrategies;
 import org.apache.flink.api.java.ExecutionEnvironment;
 import org.apache.flink.api.java.LocalEnvironment;
+import org.apache.flink.core.execution.JobClient;
 import org.apache.flink.core.fs.FileSystem;
 import org.apache.flink.runtime.state.filesystem.FsStateBackend;
 import org.apache.flink.runtime.state.memory.MemoryStateBackend;
@@ -36,7 +36,10 @@ import org.slf4j.LoggerFactory;
 /**
  * An abstract job class for Flink Pravega applications.
  */
-public abstract class AbstractJob implements Runnable {
+public abstract class AbstractJob {
+
+    final static String JAR_FILES_PATH = "lib/pravega-data-importer-1.0-SNAPSHOT.jar";
+
     final private static Logger log = LoggerFactory.getLogger(AbstractJob.class);
 
     private final AppConfiguration config;
@@ -45,30 +48,23 @@ public abstract class AbstractJob implements Runnable {
         this.config = config;
     }
 
+    /**
+     * Used to retrieve the application configuration, containing parameters.
+     */
     public AppConfiguration getConfig() {
         return config;
     }
 
     /**
-     * If the Pravega stream does not exist, creates a new stream with the specified stream configuration.
-     * If the stream exists, it is unchanged.
+     * Concrete implementations use this method to submit Flink jobs to the Flink cluster.
      */
-    public void createStream(AppConfiguration.StreamConfig streamConfig) {
-        try (StreamManager streamManager = StreamManager.create(streamConfig.getPravegaConfig().getClientConfig())) {
-            StreamConfiguration streamConfiguration = StreamConfiguration.builder()
-                    .scalingPolicy(streamConfig.getScalingPolicy())
-                    .build();
-            streamManager.createStream(
-                    streamConfig.getStream().getScope(),
-                    streamConfig.getStream().getStreamName(),
-                    streamConfiguration);
-        }
-    }
+    public abstract JobClient submitJob();
 
     /**
      * Get head and tail stream cuts for a Pravega stream.
+     * @param streamConfig stream configuration
      */
-    public StreamInfo getStreamInfo(AppConfiguration.StreamConfig streamConfig) {
+    public static StreamInfo getStreamInfo(AppConfiguration.StreamConfig streamConfig) {
         try (StreamManager streamManager = StreamManager.create(streamConfig.getPravegaConfig().getClientConfig())) {
             return streamManager.getStreamInfo(streamConfig.getStream().getScope(), streamConfig.getStream().getStreamName());
         }
@@ -77,8 +73,9 @@ public abstract class AbstractJob implements Runnable {
     /**
      * Convert UNBOUNDED start StreamCut to a concrete StreamCut, pointing to the current head or tail of the stream
      * (depending on isStartAtTail).
+     * @param streamConfig stream configuration
      */
-    public StreamCut resolveStartStreamCut(AppConfiguration.StreamConfig streamConfig) {
+    public static StreamCut resolveStartStreamCut(AppConfiguration.StreamConfig streamConfig) {
         if (streamConfig.isStartAtTail()) {
             return getStreamInfo(streamConfig).getTailStreamCut();
         } else if (streamConfig.getStartStreamCut() == StreamCut.UNBOUNDED) {
@@ -92,8 +89,9 @@ public abstract class AbstractJob implements Runnable {
      * For bounded reads (indicated by isEndAtTail), convert UNBOUNDED end StreamCut to a concrete StreamCut,
      * pointing to the current tail of the stream.
      * For unbounded reads, returns UNBOUNDED.
+     * @param streamConfig stream configuration
      */
-    public StreamCut resolveEndStreamCut(AppConfiguration.StreamConfig streamConfig) {
+    public static StreamCut resolveEndStreamCut(AppConfiguration.StreamConfig streamConfig) {
         if (streamConfig.isEndAtTail()) {
             return getStreamInfo(streamConfig).getTailStreamCut();
         } else {
@@ -101,22 +99,39 @@ public abstract class AbstractJob implements Runnable {
         }
     }
 
-    public StreamExecutionEnvironment initializeFlinkStreaming() {
-        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-
+    /**
+     * Initializes and returns a StreamExecutionEnvironment for Flink jobs to run.
+     * Takes in the application configuration and boolean for if the Flink Cluster is a remote cluster, in which case
+     * the method will return a RemoteEnvironment. Else, a LocalStreamEnvironment may be returned (this is for use in
+     * unit testing and integration testing purposes).
+     *
+     * @param config Application parameters used to configure the Flink {@link StreamExecutionEnvironment}.
+     * @param remoteCluster If true, returned environment will specifically be a
+     * {@link org.apache.flink.streaming.api.environment.RemoteStreamEnvironment}. Else, an environment will be created
+     *                      based on context in which program is currently executed.
+     */
+    public static StreamExecutionEnvironment initializeFlinkStreaming(AppConfiguration config, boolean remoteCluster) {
+        StreamExecutionEnvironment env;
+        String host = config.getParams().get("flinkHost", "localhost");
+        int port = config.getParams().getInt("flinkPort", 8081);
+        if (remoteCluster) {
+            env = StreamExecutionEnvironment.createRemoteEnvironment(host, port, JAR_FILES_PATH);
+        } else {
+            env = StreamExecutionEnvironment.getExecutionEnvironment();
+        }
         // Make parameters show in Flink UI.
-        env.getConfig().setGlobalJobParameters(getConfig().getParams());
+        env.getConfig().setGlobalJobParameters(config.getParams());
 
-        env.setParallelism(getConfig().getParallelism());
+        env.setParallelism(config.getParallelism());
         log.info("Parallelism={}, MaxParallelism={}", env.getParallelism(), env.getMaxParallelism());
 
-        if (!getConfig().isEnableOperatorChaining()) {
+        if (!config.isEnableOperatorChaining()) {
             env.disableOperatorChaining();
         }
-        if (getConfig().isEnableCheckpoint()) {
-            env.enableCheckpointing(getConfig().getCheckpointIntervalMs(), CheckpointingMode.EXACTLY_ONCE);
-            env.getCheckpointConfig().setMinPauseBetweenCheckpoints(getConfig().getCheckpointIntervalMs() / 2);
-            env.getCheckpointConfig().setCheckpointTimeout(getConfig().getCheckpointTimeoutMs());
+        if (config.isEnableCheckpoint()) {
+            env.enableCheckpointing(config.getCheckpointIntervalMs(), CheckpointingMode.EXACTLY_ONCE);
+            env.getCheckpointConfig().setMinPauseBetweenCheckpoints(config.getCheckpointIntervalMs() / 2);
+            env.getCheckpointConfig().setCheckpointTimeout(config.getCheckpointTimeoutMs());
             // A checkpoint failure will cause the job to fail.
             env.getCheckpointConfig().setTolerableCheckpointFailureNumber(0);
             // If the job is cancelled manually by the user, do not delete the checkpoint.
@@ -136,11 +151,14 @@ public abstract class AbstractJob implements Runnable {
             log.warn("Using noRestart restart strategy");
             env.setRestartStrategy(RestartStrategies.noRestart());
             // Initialize Hadoop file system.
-            FileSystem.initialize(getConfig().getParams().getConfiguration());
+            FileSystem.initialize(config.getParams().getConfiguration());
         }
         return env;
     }
 
+    /**
+     * Initializes Flink ExecutionEnvironment in batched processing mode.
+     */
     public ExecutionEnvironment initializeFlinkBatch() {
         ExecutionEnvironment env = ExecutionEnvironment.getExecutionEnvironment();
 

@@ -20,6 +20,7 @@ import io.pravega.client.stream.Stream;
 import io.pravega.client.stream.StreamCut;
 import io.pravega.client.stream.impl.DefaultCredentials;
 import io.pravega.connectors.flink.PravegaConfig;
+import io.pravega.dataimporter.utils.PravegaKeycloakCredentialsFromString;
 import org.apache.flink.api.java.utils.ParameterTool;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -40,9 +41,11 @@ import static org.apache.flink.api.common.ExecutionConfig.PARALLELISM_UNKNOWN;
  * This class can be extended for job-specific configuration parameters.
  */
 public class AppConfiguration {
+    public static final String ACTION_PARAMETER = "action-type";
+
     final private static Logger log = LoggerFactory.getLogger(AppConfiguration.class);
 
-    private final ParameterTool params;
+    private final Map<String, String> params;
     private final int parallelism;
     private final int readerParallelism;
     private final long checkpointIntervalMs;
@@ -54,8 +57,14 @@ public class AppConfiguration {
     private final String jobName;
     private final String avroSchema;
 
-    public AppConfiguration(String[] args) throws IOException {
-        params = ParameterTool.fromArgs(args);
+    /**
+     * Creates a new instance of the AppConfiguration class.
+     * 
+     * @param args command-line arguments
+     * @throws IOException failed to read avroSchemaFile
+     */
+    private AppConfiguration(Map<String, String> args) throws IOException {
+        params = args;
         log.info("Parameter Tool: {}", getParams().toMap());
         parallelism = getParams().getInt("parallelism", PARALLELISM_UNKNOWN);
         readerParallelism = getParams().getInt("readerParallelism", PARALLELISM_DEFAULT);
@@ -74,13 +83,26 @@ public class AppConfiguration {
             if (avroSchemaFileName.isEmpty()) {
                 avroSchema = "";
             } else {
-                avroSchema = new String(Files.readAllBytes(Paths.get(avroSchemaFileName)), StandardCharsets.UTF_8);
+                avroSchema = Files.readString(Paths.get(avroSchemaFileName));
             }
         } else {
             avroSchema = new String(Base64.getDecoder().decode(avroSchemaBase64), StandardCharsets.UTF_8);
         }
     }
 
+    /**
+     * Static factory method that returns a new {@link AppConfiguration}.
+     * @param args command-line arguments
+     * @return new AppConfiguration of parsed arguments
+     * @throws IOException failed to read avroSchemaFile
+     */
+    public static AppConfiguration createAppConfiguration(Map<String, String> args) throws IOException {
+        return new AppConfiguration(args);
+    }
+
+    /**
+     * Returns String representation of AppConfiguration.
+     */
     @Override
     public String toString() {
         return "AppConfiguration{" +
@@ -97,54 +119,96 @@ public class AppConfiguration {
                 '}';
     }
 
+    /**
+     * Returns application parameters.
+     */
     public ParameterTool getParams() {
-        return params;
+        return ParameterTool.fromMap(params);
     }
 
+    /**
+     * Returns stream configuration.
+     *
+     * @param argName Info about the stream such as "input" or "output"
+     */
     public StreamConfig getStreamConfig(final String argName) {
         return new StreamConfig(argName,  getParams());
     }
 
+    /**
+     * Returns parallelism for the app configuration.
+     */
     public int getParallelism() {
         return parallelism;
     }
 
+    /**
+     * Returns reader parallelism for the app configuration.
+     */
     public int getReaderParallelism() {
         return readerParallelism;
     }
 
+    /**
+     * Returns checkpoint timeout in milliseconds for the app configuration.
+     */
     public long getCheckpointTimeoutMs() {
         return checkpointTimeoutMs;
     }
 
+    /**
+     * Returns checkpoint interval in milliseconds for the app configuration.
+     */
     public long getCheckpointIntervalMs() {
         return checkpointIntervalMs;
     }
 
+    /**
+     * Returns if checkpointing is enabled for the app configuration.
+     */
     public boolean isEnableCheckpoint() {
         return enableCheckpoint;
     }
 
+    /**
+     * Returns if operator chaining is enabled for the app configuration.
+     */
     public boolean isEnableOperatorChaining() {
         return enableOperatorChaining;
     }
 
+    /**
+     * Returns rebalancing is enabled for the app configuration.
+     */
     public boolean isEnableRebalance() {
         return enableRebalance;
     }
 
+    /**
+     * Returns maximum out of orderness in milliseconds for the app configuration.
+     */
     public long getMaxOutOfOrdernessMs() {
         return maxOutOfOrdernessMs;
     }
 
+    /**
+     * Returns job name for the app configuration.
+     * @param defaultJobName the default job name to return if jobName is not set
+     */
     public String getJobName(String defaultJobName) {
         return (jobName == null) ? defaultJobName : jobName;
     }
 
+    /**
+     * Returns Avro schema for the app configuration.
+     */
     public String getAvroSchema() {
         return avroSchema;
     }
 
+    /**
+     * Inner class that represents the configuration for a Pravega Stream.
+     */
     public static class StreamConfig {
         private final Stream stream;
         private final PravegaConfig pravegaConfig;
@@ -156,6 +220,11 @@ public class AppConfiguration {
         private final boolean startAtTail;
         private final boolean endAtTail;
 
+        /**
+         * Creates a new instance of the StreamConfig class.
+         * @param argName prefix string used to pull matching stream parameters
+         * @param globalParams all parameters provided to the application
+         */
         public StreamConfig(final String argName, final ParameterTool globalParams) {
             final String argPrefix = argName.isEmpty() ? argName : argName + "-";
 
@@ -177,22 +246,22 @@ public class AppConfiguration {
             tempPravegaConfig = tempPravegaConfig.withDefaultScope(stream.getScope());
 
             final String keycloakConfigBase64 = params.get("keycloak", "");
-            /*if (!keycloakConfigBase64.isEmpty()) {
+            if (!keycloakConfigBase64.isEmpty()) {
                 // Add Keycloak credentials. This is decoded as base64 to avoid complications with JSON in arguments.
                 log.info("Loading base64-encoded Keycloak credentials from parameter {}keycloak.", argPrefix);
                 final String keycloakConfig = new String(Base64.getDecoder().decode(keycloakConfigBase64), StandardCharsets.UTF_8);
                 tempPravegaConfig = tempPravegaConfig.withCredentials(new PravegaKeycloakCredentialsFromString(keycloakConfig));
-            } else {*/
+            } else {
                 // Add username/password credentials.
                 final String username = params.get("username", "");
                 final String password = params.get("password", "");
                 if (!username.isEmpty() || !password.isEmpty()) {
                     tempPravegaConfig = tempPravegaConfig.withCredentials(new DefaultCredentials(password, username));
                 }
-            //}
+            }
 
             pravegaConfig = tempPravegaConfig;
-            targetRate = params.getInt("targetRate", 10*1024*1024);  // data rate in KiB/sec
+            targetRate = params.getInt("targetRate", 10 * 1024 * 1024);  // data rate in KiB/sec
             scaleFactor = params.getInt("scaleFactor", 2);
             minNumSegments = params.getInt("minNumSegments", 1);
             startStreamCut = StreamCut.from(params.get("startStreamCut", StreamCut.UNBOUNDED.asText()));
@@ -201,6 +270,9 @@ public class AppConfiguration {
             endAtTail = params.getBoolean("endAtTail", false);
         }
 
+        /**
+         * Returns StreamConfig in String format.
+         */
         @Override
         public String toString() {
             return "StreamConfig{" +
@@ -216,30 +288,51 @@ public class AppConfiguration {
                     '}';
         }
 
+        /**
+         * Returns Pravega Stream for the StreamConfig.
+         */
         public Stream getStream() {
             return stream;
         }
 
+        /**
+         * Returns PravegaConfig for the StreamConfig.
+         */
         public PravegaConfig getPravegaConfig() {
             return pravegaConfig;
         }
 
+        /**
+         * Returns Scaling Policy for the StreamConfig.
+         */
         public ScalingPolicy getScalingPolicy() {
             return ScalingPolicy.byDataRate(targetRate, scaleFactor, minNumSegments);
         }
 
+        /**
+         * Returns Starting StreamCut for the given StreamConfig.
+         */
         public StreamCut getStartStreamCut() {
             return startStreamCut;
         }
 
+        /**
+         * Returns ending StreamCut for the given StreamConfig.
+         */
         public StreamCut getEndStreamCut() {
             return endStreamCut;
         }
 
+        /**
+         * Returns if the start is at the tail of the Pravega Stream for the given StreamConfig.
+         */
         public boolean isStartAtTail() {
             return startAtTail;
         }
 
+        /**
+         * Returns if the end is at the tail of the Pravega Stream for the given StreamConfig.
+         */
         public boolean isEndAtTail() {
             return endAtTail;
         }
